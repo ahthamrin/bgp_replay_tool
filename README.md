@@ -2,7 +2,10 @@
 BGP replay tool, based on the work by CAIA, Swinburne University of Technology
 (http://caia.swin.edu.au/tools/bgp/brt/downloads.html).
 
-I added a small feature so you can also inject BGP updates to a running BRT via a named pipe.
+I added the following two features:
+1. inject BGP updates to a running BRT via a named pipe,
+2. ignore replay time.
+   
 ```
 BRT-0.2.1: BGP Replay Tool script.
 
@@ -22,16 +25,18 @@ usage:
 			# in AS-PATH of the injected updates
   [-help]		# Display BRT tool help
   [-l]			# Allow BRT to listen on port 179
+  [-t]			# Ignore replay time
   [-v]			# log to stdout
 ```
 Example:
-1. Starting BRT
+1. Create a named pipe then start BRT
    
     ```
-   perl brt-0.2.1.pl -brtas 65001 -brtip 172.16.2.2 -peeras 65002 -peerip 172.16.2.1 -f bgpdump -u update.pipe
+   mkfifo update.pipe
+   perl brt-0.2.1.pl -brtas 65001 -brtip 172.16.2.2 -peeras 65002 -peerip 172.16.2.1 -f in_new -u update.pipe
     ```
    
-3. Sending BGP updates (up to 640KB)
+2. Sending BGP updates (up to 640KB)
    
    ```
    cat bgpdump-update > update.pipe

@@ -1,0 +1,479 @@
+--- Net/BGP/Transport.pm	2015-01-27 23:00:13.000000000 +0000
++++ Net/BGP/Transport.pm	2017-04-27 23:59:53.000000000 +0000
+@@ -2,7 +2,7 @@
+ 
+ package Net::BGP::Transport;
+ use bytes;
+-
++use Socket qw(PF_INET SOCK_STREAM pack_sockaddr_in inet_pton); #XXX
+ use strict;
+ use Errno qw(EAGAIN);
+ use vars qw(
+@@ -210,7 +210,7 @@
+ use Scalar::Util qw( weaken );
+ use Errno qw(EINPROGRESS ENOTCONN);
+ use Exporter;
+-use IO::Socket;
++use IO::Socket::INET6; #XXX
+ use Carp;
+ use Carp qw(cluck);
+ use Net::BGP::Notification qw( :errors );
+@@ -1000,19 +1000,34 @@
+ 
+     # initiate the TCP transport connection
+     if ( ! $this->parent->is_passive ) {
++
++   my $family;
++   my $pf_family;
++   if ($this->parent->peer_id =~ /\:/) {
++       $family = AF_INET6;
++       $pf_family = PF_INET6;
++   } else {
++       $family = AF_INET;
++       $pf_family = PF_INET;
++   }
++
+         eval {
+-            $socket = IO::Socket->new( Domain => AF_INET );
++            $socket = IO::Socket::INET6->new( Domain => $family ); #XXX
+             if ( ! defined($socket) ) {
+                 die("IO::Socket construction failed");
+             }
+ 
+             $proto = getprotobyname('tcp');
+-            $rv = $socket->socket(PF_INET, SOCK_STREAM, $proto);
++            $rv = $socket->socket($pf_family, SOCK_STREAM, $proto); #XXX
+             if ( ! defined($rv) ) {
+                 die("socket() failed");
+             }
+ 
+-            $this_addr = sockaddr_in(0, inet_aton($this->parent->this_id));
++       if ($family eq AF_INET6) {
++               $this_addr = sockaddr_in6(0, inet_pton($family, $this->parent->this_id)); #XXX
++            } else {
++               $this_addr = sockaddr_in(0, inet_pton($family, $this->parent->this_id)); #XXX
++            }
+             $rv = $socket->bind($this_addr);
+             if ( ! $rv ) {
+                 die("bind() failed");
+@@ -1023,7 +1038,11 @@
+                 die("set socket non-blocking failed");
+             }
+ 
+-            $remote_addr = sockaddr_in($this->parent->peer_port, inet_aton($this->parent->peer_id));
++       if ($family eq AF_INET6) {
++               $remote_addr = sockaddr_in6($this->parent->peer_port, inet_pton($family, $this->parent->peer_id)); #XXX
++            } else {
++               $remote_addr = sockaddr_in($this->parent->peer_port, inet_pton($family, $this->parent->peer_id)); #XXX
++            }
+             $rv = $socket->connect($remote_addr);
+             if ( ! defined($rv) ) {
+                 die "OK - but connect() failed: $!" unless ($! == EINPROGRESS);
+@@ -1175,23 +1194,25 @@
+             # We received an open from the other end
+ 
+             if ($this->{_peer_mbgp}) {
+-                $opt .= $this->_encode_capability_mbgp();
++                $opt .= $this->_encode_capability_mbgp(1);
++                $opt .= $this->_encode_capability_mbgp(2);
+             }
+ 
+             if ($this->{_peer_as4}) {
+-                $opt .= $this->_encode_capability_as4();
++                $opt .= $this->_encode_capability_as4(1); #XXX
++                $opt .= $this->_encode_capability_as4(2); #XXX
+             }
+ 
+         }  else {
+             # We are sending the open
+ 
+             if ( $this->parent->support_mbgp ) {
+-                $opt .= $this->_encode_capability_mbgp();
++                $opt .= $this->_encode_capability_mbgp(1);
++                $opt .= $this->_encode_capability_mbgp(2);
+             }
+             if ( $this->parent->this_can_as4 ) {
+                 $opt .= $this->_encode_capability_as4();
+             }
+-
+         }
+ 
+         # Both the standard (2) and Cisco (128) capabilities are sent
+@@ -1204,7 +1225,11 @@
+     $buffer = pack('C', length($opt)) . $opt;
+ 
+     # encode BGP Identifier field
+-    $buffer = inet_aton($this->parent->this_id) . $buffer;
++    if ($this->parent->this_id =~ /\:/) {
++       $buffer = inet_aton("192.168.250.1") . $buffer; #XXX
++   } else {
++        $buffer = inet_aton($this->parent->this_id) . $buffer;
++   }
+ 
+     # encode Hold Time
+     $buffer = pack('n', $this->{_hold_time}) . $buffer;
+@@ -1225,10 +1250,11 @@
+ sub _encode_capability_mbgp
+ {
+     my $this = shift;
++    my $cap = shift;
+ 
+     # Capability 1 with data of:
+     # Address family 1 (IPv4), reserved bit 0, type 1 (unicast)
+-    my $cap = pack('ncc', 1, 0, 1);
++    my $cap = pack('ncc', $cap, 0, 1);
+     my $opt = $this->_encode_capability(BGP_CAPABILITY_MBGP, $cap);
+ 
+     return $opt;
+--- Net/BGP/Update.pm	2015-01-27 23:00:13.000000000 +0000
++++ Net/BGP/Update.pm	2017-05-08 13:11:07.000000000 +0000
+@@ -1,6 +1,7 @@
+ #!/usr/bin/perl
+ 
+ package Net::BGP::Update;
++use Socket qw(PF_INET SOCK_STREAM pack_sockaddr_in inet_pton inet_ntop);
+ use bytes;
+ 
+ use strict;
+@@ -37,6 +40,8 @@
+ sub BGP_PATH_ATTR_ATOMIC_AGGREGATE { 6 }
+ sub BGP_PATH_ATTR_AGGREGATOR       { 7 }
+ sub BGP_PATH_ATTR_COMMUNITIES      { 8 }
++sub BGP_PATH_ATTR_MP_REACH_NLRI    { 14 }
++sub BGP_PATH_ATTR_MP_UNREACH_NLRI  { 15 }
+ sub BGP_PATH_ATTR_AS4_PATH         { 17 }
+ sub BGP_PATH_ATTR_AS4_AGGREGATOR   { 18 }
+ 
+@@ -62,8 +67,8 @@
+     0x00, ## TODO: change to undef after warnings enabled
+     0x00, ## TODO: change to undef after warnings enabled
+     0x00, ## TODO: change to undef after warnings enabled
+-    0x00, ## TODO: change to undef after warnings enabled
+-    0x00, ## TODO: change to undef after warnings enabled
++    0x80, 
++    0x80, ## MP_UNREACH_NRLI
+     0x00, ## TODO: change to undef after warnings enabled
+     0xC0, # AS4_PATH
+     0xC0, # AS4_AGGREGATOR
+@@ -112,23 +117,29 @@
+     my %this_arg;
+     $this_arg{_withdrawn} = [];
+     $this_arg{_nlri} = [];
+-
+-    while ( defined($arg = shift()) ) {
++    $this_arg{_mp_reach_nlri} = [];
++    $this_arg{_mp_unreach_nlri} = [];
++    while ( defined($arg = shift()) ) {        
+         $value = shift();
+-
+-        if ( $arg =~ /nlri/i ) {
++        if ( $arg =~ /^nlri/i ) {
+             $this_arg{_nlri} = $value;
+         }
+         elsif ( $arg =~ /withdraw/i ) {
+             $this_arg{_withdrawn} = $value;
++        } 
++        elsif ( $arg =~ /mp_reach_nlri/i ) {
++      $this_arg{_mp_reach_nlri} = $value;	
++   }
++        elsif ( $arg =~ /mp_unreach_nlri/i ) {
++           $this_arg{_mp_unreach_nlri} = $value;
+         }
++
+         else {
+             push(@super_arg,$arg,$value);
+         }
+     }
+ 
+     my $this = $class->SUPER::new(@super_arg);
+-
+     @{$this}{keys %this_arg} = values(%this_arg);
+ 
+     bless($this, $class);
+@@ -160,6 +171,24 @@
+     return ( $this->{_nlri} );
+ }
+ 
++sub mp_reach_nlri
++{
++    my $this = shift();
++
++    $this->{_mp_reach_nlri} = @_ ? shift() : $this->{_mp_reach_nlri};
++    return ( $this->{_mp_reach_nlri} );
++}
++
++
++sub mp_unreach_nlri
++{
++    my $this = shift();
++
++    $this->{_mp_unreach_nlri} = @_ ? shift() : $this->{_mp_unreach_nlri};
++    return ( $this->{_mp_unreach_nlri} );
++}
++
++
+ sub withdrawn
+ {
+     my $this = shift();
+@@ -527,6 +556,90 @@
+     return ( undef );
+ }
+ 
++sub _decode_mp_reach_nlri
++{
++    my ($this, $buffer) = @_;
++    my ($offset, $prefix, $attrib_len);
++    my @prefix_list;
++    my ($afi, $safi, $next_hop_len, $next_hop);
++    
++    $attrib_len = length($buffer);
++
++    $offset = 0;
++    $afi = unpack('n', substr($buffer, $offset, 2));
++    $offset += 2;
++    $safi = unpack('C', substr($buffer, $offset, 1));
++    $offset += 1;
++    $next_hop_len = unpack('C', substr($buffer, $offset, 1));
++    $offset += 1;
++    $next_hop =  substr($buffer, $offset, $next_hop_len);
++    $offset += $next_hop_len;
++    $next_hop = inet_ntop(AF_INET6, $next_hop);
++
++    my $snap = unpack('C', substr($buffer, $offset, 1));
++    $offset += 1;
++
++    while ($offset < $attrib_len) {
++         my $prefix_len_in_bits = unpack('C', substr($buffer, $offset, 1));
++         $offset += 1;
++
++         my $prefix_len_in_bytes = int($prefix_len_in_bits/8);
++         if ($prefix_len_in_bits % 8 != 0) {
++            $prefix_len_in_bytes++;
++         }
++    
++         $prefix = substr($buffer, $offset, $prefix_len_in_bytes);
++         $offset +=  $prefix_len_in_bytes;
++    
++         my $cip = "C" x $prefix_len_in_bytes;
++         $prefix = pack('CCCCCCCCCCCCCCCC', unpack($cip, $prefix));
++         $prefix = inet_ntop(AF_INET6, $prefix);
++
++          push (@prefix_list, $prefix . "/" .  $prefix_len_in_bits);
++   
++   }
++   push(@{$this->{_mp_reach_nlri}}, @prefix_list);
++   $this->{_next_hop} = $next_hop;
++   return ( undef );
++}
++
++sub _decode_mp_unreach_nlri
++{
++    my ($this, $buffer) = @_;
++    my ($offset, $prefix, $attrib_len);
++    my @prefix_list;
++    my ($afi, $safi, $next_hop_len, $next_hop);
++
++    $attrib_len = length($buffer);
++
++    $offset = 0;
++    $afi = unpack('n', substr($buffer, $offset, 2));
++    $offset += 2;
++    $safi = unpack('C', substr($buffer, $offset, 1));
++    $offset += 1;
++
++    while ($offset < $attrib_len) {
++         my $prefix_len_in_bits = unpack('C', substr($buffer, $offset, 1));
++         $offset += 1;
++
++         my $prefix_len_in_bytes = int($prefix_len_in_bits/8);
++         if ($prefix_len_in_bits % 8 != 0) {
++            $prefix_len_in_bytes++;
++         }
++
++         $prefix = substr($buffer, $offset, $prefix_len_in_bytes);
++         $offset +=  $prefix_len_in_bytes;
++
++         my $cip = "C" x $prefix_len_in_bytes;
++         $prefix = pack('CCCCCCCCCCCCCCCC', unpack($cip, $prefix));
++         $prefix = inet_ntop(AF_INET6, $prefix);
++
++         push (@prefix_list, $prefix . "/" .  $prefix_len_in_bits);
++   }
++   push(@{$this->{_mp_unreach_nlri}}, @prefix_list);
++   return ( undef );
++}
++
+ sub _decode_path_attributes
+ {
+     my ($this, $buffer, $options) = @_;
+@@ -552,8 +665,8 @@
+         undef,                              # 11
+         undef,                              # 12
+         undef,                              # 13
+-        undef,                              # 14
+-        undef,                              # 15
++        \&_decode_mp_reach_nlri,            # 14
++        \&_decode_mp_unreach_nlri,          # 15
+         undef,                              # 16
+         \&_decode_as4_path,                 # 17
+         \&_decode_as4_aggregator,           # 18
+@@ -630,17 +743,17 @@
+         $data_length -= ($length + $len_bytes + 2);
+     }
+ 
+-    ## Check for missing mandatory well-known attributes
++    ## Check for missing mandatory well-known attributes XXX
+     ##
+-    for my $attr (@_BGP_MANDATORY_ATTRS)
+-    {
+-        $this->{_attr_mask}->[$attr]
+-            or Net::BGP::Notification->throw(
+-                ErrorCode    => BGP_ERROR_CODE_UPDATE_MESSAGE,
+-                ErrorSubCode => BGP_ERROR_SUBCODE_MISSING_WELL_KNOWN_ATTR,
+-                ErrorData    => pack('C', $attr)
+-            );
+-    }
++    #for my $attr (@_BGP_MANDATORY_ATTRS)
++    #{
++    #    $this->{_attr_mask}->[$attr]
++    #        or Net::BGP::Notification->throw(
++    #            ErrorCode    => BGP_ERROR_CODE_UPDATE_MESSAGE,
++    #            ErrorSubCode => BGP_ERROR_SUBCODE_MISSING_WELL_KNOWN_ATTR,
++    #            ErrorData    => pack('C', $attr)
++    #        );
++    #}
+ 
+     ## Check for repeated attributes, which violates RFC 4271, sec 5.
+     ##
+@@ -798,10 +912,12 @@
+ }
+ 
+ sub _encode_next_hop
+-{
++{
+     my $this = shift();
+-    $this->_encode_attr(BGP_PATH_ATTR_NEXT_HOP,
++    if ($this->{_next_hop} !~ /\:/) {  #XXX
++        $this->_encode_attr(BGP_PATH_ATTR_NEXT_HOP,
+                         inet_aton($this->{_next_hop}));
++    }
+ }
+ 
+ sub _encode_med
+@@ -873,8 +989,79 @@
+     $this->_encode_attr(BGP_PATH_ATTR_COMMUNITIES, $community_buffer);
+ }
+ 
++sub _encode_mp_reach_nlri
++{
++
++    my $this = shift(); 
++    my $mp_reach_nlri_buffer;
++    my @prefixes = @{$this->{_mp_reach_nlri}};
++    my $next_hop = $this->{_next_hop};
++    
++    #print "+++";
++    #my @res =  unpack('CCCCCCCCCCCCCCCC', inet_pton(AF_INET6, $next_hop));
++    #print $res[15];
++    #print "---\n";
++    
++    $mp_reach_nlri_buffer .= pack('n', 2); # AFI IPv6 on two bytes 2
++    $mp_reach_nlri_buffer .= pack('C', 1); # SAFI UNICAST 1
++
++    $mp_reach_nlri_buffer .= pack('C', 16); # length of next hop fixed to 16 bytes
++    $mp_reach_nlri_buffer .= inet_pton(AF_INET6, $next_hop);
++
++    $mp_reach_nlri_buffer .= pack('C', 0); # reserved
++    
++    foreach my $prefix (@prefixes) {
++
++       my ($prefix_value, $prefix_len_in_bits) = split /\//, $prefix;
++
++       $mp_reach_nlri_buffer .= pack('C', $prefix_len_in_bits); # length
++       my $prefix_len_in_bytes = int($prefix_len_in_bits/8);
++       if ($prefix_len_in_bits % 8 != 0) {
++           $prefix_len_in_bytes++;
++       }
++
++       my @res = unpack('CCCCCCCCCCCCCCCC', inet_pton(AF_INET6, $prefix_value));
++       for (my $i = 0; $i < $prefix_len_in_bytes; $i++) { # only put the required bytes into the buffer
++           $mp_reach_nlri_buffer .= pack('C', $res[$i]);
++       }
++    }
++    
++    $this->_encode_attr(BGP_PATH_ATTR_MP_REACH_NLRI, $mp_reach_nlri_buffer);
++}
++
++sub _encode_mp_unreach_nlri
++{
++
++    my $this = shift();
++    my $mp_unreach_nlri_buffer;
++    my @prefixes = @{$this->{_mp_unreach_nlri}};
++    my $next_hop = $this->{_next_hop};
++
++    $mp_unreach_nlri_buffer .= pack('n', 2); # AFI IPv6 on two bytes
++    $mp_unreach_nlri_buffer .= pack('C', 1); # SAFI UNICAST
++
++    foreach my $prefix (@prefixes) {
++
++        my ($prefix_value, $prefix_len_in_bits) = split /\//, $prefix;
++
++        $mp_unreach_nlri_buffer .= pack('C', $prefix_len_in_bits); # length
++        my $prefix_len_in_bytes = int($prefix_len_in_bits/8);
++        if ($prefix_len_in_bits % 8 != 0) {
++                $prefix_len_in_bytes++;
++        }
++
++        my @res = unpack('CCCCCCCCCCCCCCCC', inet_pton(AF_INET6, $prefix_value));
++        for (my $i = 0; $i < $prefix_len_in_bytes; $i++) { # only put the required bytes into the buffer
++                $mp_unreach_nlri_buffer .= pack('C', $res[$i]);
++        }
++    }
++
++    $this->_encode_attr(BGP_PATH_ATTR_MP_UNREACH_NLRI, $mp_unreach_nlri_buffer);
++}
++
+ sub _encode_path_attributes
+ {
++
+     my ($this, $options) = @_;
+ 
+     if (!defined($options)) { $options = {}; }
+@@ -884,9 +1071,20 @@
+ 
+     $buffer = '';
+ 
++
++    # encode the MP_UNREACH path attribute
++    if ( defined($this->{_mp_unreach_nlri}) &&
++         scalar(@{$this->{_mp_unreach_nlri}})) {
++
++        $buffer .= $this->_encode_mp_unreach_nlri();
++        return ( $buffer );
++     }
++
+     # do not encode path attributes if no NLRI is present
+-    unless ((defined $this->{_nlri})
+-         && scalar(@{$this->{_nlri}})) {
++    unless (
++       ((defined $this->{_nlri}) && scalar(@{$this->{_nlri}})) || 
++       ((defined $this->{_mp_reach_nlri}) && scalar(@{$this->{_mp_reach_nlri}}))
++   ) {
+         return ( $buffer );
+     }
+ 
+@@ -933,6 +1131,13 @@
+         $buffer .= $this->_encode_communities();
+     }
+ 
++    # encode the MP_REACH path attribute
++    if ( defined($this->{_mp_reach_nlri}) && 
++         scalar(@{$this->{_mp_reach_nlri}})) {
++
++        $buffer .= $this->_encode_mp_reach_nlri();
++     }
++
+     return ( $buffer );
+ }
+ 

@@ -1,0 +1,2 @@
+-brtip 172.16.1.100 -brtipv6 fc00:3::1 -peeras 65002 -peerip 172.16.1.200 -peeripv6 fc00:3::2
+-brtip 172.16.1.100 -brtipv6 fc00:3::1 -peeras 65003 -peerip 172.16.1.201 -peeripv6 fc00:3::3
