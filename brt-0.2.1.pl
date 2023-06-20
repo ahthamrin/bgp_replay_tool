@@ -107,7 +107,7 @@ usage:
   [-ipv6] 		# connect to peer using IPv6
   [-m <Filename>]	# connect to multiple peers specified in <Filename>
   -f <Filename>		# BGP update file in human readable with Unix format (bgpdump -m option)
-  [-u <Named pipe>]	# named pipe for sending BGP updates; use same format as the BGP update file
+  [-u <Named pipe>]	# named pipe to read a new BGP update file
   [-c <Filename>]	# check the existence of AS numbers in <Filename> 
 			# in AS-PATH of the injected updates
   [-help]		# Display BRT tool help
@@ -135,7 +135,6 @@ my $nol = 0;
 my $fh;
 my @pipe_buffer;
 my $ph;
-my $count = 0;
 
 sub sending
 {
@@ -153,6 +152,7 @@ sub sending
     my @line_next, @line = ();
     my @prefixes = ();
     my $lastline = 0;
+    my $count = 0;
     
     my $process_routes = sub {
         my $row = shift(@_);
@@ -376,6 +376,7 @@ sub my_timer_callback
             # Open the dump file
             if (open($fh, '<:encoding(UTF-8)', $input_file)) {
                 sending(1);
+                close $fh;
             } else {
                 die "Could not open BGPDump file '$input_file' $!";
             }
@@ -399,9 +400,14 @@ sub my_timer_callback
         if (!defined($rv) && $!{EAGAIN}) {
         } else {
             my $time_b = gettimeofday();
-            @pipe_buffer = split '\n', $pipe_buffer;
-            push(@pipe_buffer, '');
-            sending(0);
+            my @dump_file = split '\n', $pipe_buffer;
+            $nol = 0;
+            if (open($fh, '<:encoding(UTF-8)', $dump_file[0])) {
+                sending(1);
+                close $fh;
+            } else {
+                warn "Could not open BGPDump file '$dump_file[0]' $!";
+            }
             $dtime = gettimeofday()- $time_b;
             print "Sending updates completed...\n";
             print "no. of updates: $nol, time:$dtime (", int($nol/$dtime),"/s)\n";

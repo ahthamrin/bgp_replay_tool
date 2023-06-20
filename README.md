@@ -20,7 +20,7 @@ usage:
   [-ipv6] 		# connect to peer using IPv6
   [-m <Filename>]	# connect to multiple peers specified in <Filename>
   -f <Filename>		# BGP update file in human readable with Unix format (bgpdump -m option)
-  [-u <Named pipe>]	# named pipe for sending BGP updates; use same format as the BGP update file
+  [-u <Named pipe>]	# named pipe to read a new BGP update file
   [-c <Filename>]	# check the existence of AS numbers in <Filename> 
 			# in AS-PATH of the injected updates
   [-help]		# Display BRT tool help
@@ -36,10 +36,10 @@ Example:
    perl brt-0.2.1.pl -brtas 65001 -brtip 172.16.2.2 -peeras 65002 -peerip 172.16.2.1 -f in_new -u update.pipe
     ```
    
-2. Sending BGP updates (up to 640KB)
+2. Sending BGP updates from in_update file
    
    ```
-   cat bgpdump-update > update.pipe
+   echo "in_update" > update.pipe
    ```
 
 Refer to README-brt.txt for the details.
